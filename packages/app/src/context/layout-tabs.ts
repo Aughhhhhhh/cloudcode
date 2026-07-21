@@ -56,6 +56,13 @@ export function openSessionTab(current: SessionTabState, tab: string): SessionTa
     }
   }
 
+  if (preview === SESSION_OPEN_FILE_TAB && tab !== SESSION_OPEN_FILE_TAB) {
+    const all = current.tabs.all.includes(tab) ? current.tabs.all : [...current.tabs.all, tab]
+    return {
+      tabs: { all, active: tab },
+    }
+  }
+
   const previewIndex = preview ? current.tabs.all.indexOf(preview) : -1
   const existingIndex = current.tabs.all.indexOf(tab)
   if (existingIndex !== -1) {
@@ -101,3 +108,4 @@ export function closeSessionTab(current: SessionTabState, tab: string): SessionT
     preview,
   }
 }
+
