@@ -1,3 +1,5 @@
+import "./rules-interceptor"
+
 export function initializationData<A>(state: (() => A | undefined) & { error: unknown }) {
   if (state.error !== undefined) throw markLocalServerStartup(state.error)
   return state()
@@ -20,3 +22,5 @@ export function initializationReady<A>(state: (() => A | undefined) & { error: u
   initializationData(state)
   return true
 }
+
+
