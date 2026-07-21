@@ -5,7 +5,7 @@ import { Switch } from "@opencode-ai/ui/switch"
 import { Tabs } from "@opencode-ai/ui/tabs"
 import { showToast } from "@/utils/toast"
 import { useNavigate } from "@solidjs/router"
-import { type Accessor, createEffect, createMemo, For, type JSXElement, onCleanup, Show } from "solid-js"
+import { type Accessor, createEffect, createMemo, createSignal, For, type JSXElement, onCleanup, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { ServerHealthIndicator, ServerRow } from "@/components/server/server-row"
 import { useLanguage } from "@/context/language"
@@ -16,6 +16,13 @@ import { type ServerHealth } from "@/utils/server-health"
 import { useGlobal } from "@/context/global"
 import { useSettings } from "@/context/settings"
 import { useMcpToggle } from "@/context/mcp"
+import { useSettingsDialog } from "@/components/settings-dialog"
+import {
+  readModelRules,
+  subscribeModelRules,
+  type ModelRule,
+  writeModelRules,
+} from "@/features/rules/store"
 
 const pluginEmptyMessage = (value: string, file: string): JSXElement => {
   const parts = value.split(file)
@@ -257,6 +264,10 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
   const language = useLanguage()
   const navigate = useNavigate()
   const settings = useSettings()
+  const openRules = useSettingsDialog("rules")
+  const [rules, setRules] = createSignal(readModelRules())
+  const unsubscribeRules = subscribeModelRules(() => setRules(readModelRules()))
+  onCleanup(unsubscribeRules)
 
   const fail = (err: unknown) => {
     showToast({
@@ -289,6 +300,22 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
   )
   const pluginCount = createMemo(() => plugins().length)
   const pluginEmpty = createMemo(() => pluginEmptyMessage(language.t("dialog.plugins.empty"), "opencode.json"))
+  const enabledRuleCount = createMemo(() => rules().filter((rule) => rule.enabled).length)
+  const ruleScope = (rule: ModelRule) => {
+    if (rule.allModels) return "All models"
+    if (rule.models.length === 0) return "No models"
+    if (rule.models.length === 1) return "1 model"
+    return `${rule.models.length} models`
+  }
+  const toggleRule = (rule: ModelRule) => {
+    writeModelRules(
+      rules().map((item) =>
+        item.id === rule.id
+          ? { ...item, enabled: !item.enabled, updatedAt: Date.now() }
+          : item,
+      ),
+    )
+  }
 
   return (
     <div class="flex items-center gap-1 w-[360px] rounded-xl shadow-[var(--shadow-lg-border-base)]">
@@ -310,6 +337,10 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
           <Tabs.Trigger value="mcp" data-slot="tab" class="text-12-regular">
             {mcpConnected() > 0 ? `${mcpConnected()} ` : ""}
             {language.t("status.popover.tab.mcp")}
+          </Tabs.Trigger>
+          <Tabs.Trigger value="rules" data-slot="tab" class="text-12-regular">
+            {enabledRuleCount() > 0 ? `${enabledRuleCount()} ` : ""}
+            Rules
           </Tabs.Trigger>
           <Tabs.Trigger value="lsp" data-slot="tab" class="text-12-regular">
             {lspCount() > 0 ? `${lspCount()} ` : ""}
@@ -450,6 +481,55 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
           </div>
         </Tabs.Content>
 
+        <Tabs.Content value="rules">
+          <div class="flex flex-col px-2 pb-2">
+            <div class="flex flex-col p-3 bg-background-base rounded-sm min-h-14">
+              <Show
+                when={rules().length > 0}
+                fallback={<div class="text-14-regular text-text-base text-center my-auto">No rules yet</div>}
+              >
+                <div class="flex max-h-64 flex-col gap-1 overflow-y-auto">
+                  <For each={rules()}>
+                    {(rule) => (
+                      <button
+                        type="button"
+                        class="flex min-h-10 w-full items-center gap-2 rounded-md px-3 py-1.5 text-left transition-colors hover:bg-surface-raised-base-hover"
+                        onClick={() => toggleRule(rule)}
+                      >
+                        <div
+                          classList={{
+                            "size-1.5 rounded-full shrink-0": true,
+                            "bg-icon-success-base": rule.enabled,
+                            "bg-border-weak-base": !rule.enabled,
+                          }}
+                        />
+                        <span class="flex min-w-0 flex-1 flex-col">
+                          <span class="text-14-regular truncate text-text-base">
+                            {rule.name || "Untitled rule"}
+                          </span>
+                          <span class="text-11-regular truncate text-text-weaker">
+                            {ruleScope(rule)} - about {Math.ceil(rule.content.length / 4)} tokens
+                          </span>
+                        </span>
+                        <div onClick={(event) => event.stopPropagation()}>
+                          <Switch checked={rule.enabled} onChange={() => toggleRule(rule)} />
+                        </div>
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </Show>
+
+              <Button
+                variant="secondary"
+                class="mt-3 self-start h-8 px-3 py-1.5"
+                onClick={openRules}
+              >
+                Manage rules
+              </Button>
+            </div>
+          </div>
+        </Tabs.Content>
         <Tabs.Content value="lsp">
           <div class="flex flex-col px-2 pb-2">
             <div class="flex flex-col p-3 bg-background-base rounded-sm min-h-14">
@@ -501,3 +581,4 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
     </div>
   )
 }
+
