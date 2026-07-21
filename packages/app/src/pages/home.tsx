@@ -35,8 +35,9 @@ import { Icon } from "@opencode-ai/ui/icon"
 import { usePlatform } from "@/context/platform"
 import { DateTime } from "luxon"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
+import { DialogFooter, DialogHeader, DialogTitleGroup, DialogV2 } from "@opencode-ai/ui/v2/dialog-v2"
 import { useDirectoryPicker } from "@/components/directory-picker"
-import { useSettingsCommand } from "@/components/settings-dialog"
+import { useSettingsCommand, useSettingsDialog } from "@/components/settings-dialog"
 import { DialogSelectServer, useServerManagementController } from "@/components/dialog-select-server"
 import { DialogServerV2 } from "@/components/settings-v2/dialog-server-v2"
 import { ServerConnection, serverName, useServer } from "@/context/server"
@@ -66,6 +67,7 @@ import { Persist, persisted } from "@/utils/persist"
 import { useMarked } from "@opencode-ai/ui/context/marked"
 import { preloadMarkdown } from "@opencode-ai/session-ui/markdown-cache"
 import { archiveHomeSession } from "./home-session-archive"
+import { notifySessionTabsRemoved } from "@/components/titlebar-session-events"
 import { shouldOpenSessionInBackground } from "./home-session-open"
 import { showToast } from "@/utils/toast"
 import { fileManagerApp } from "@/utils/file-manager"
@@ -302,6 +304,7 @@ export function NewHome() {
   const notification = useNotification()
   const marked = useMarked()
   const openSettings = useSettingsCommand()
+  const openRules = useSettingsDialog("rules")
   let focusSessionSearch: (() => void) | undefined
   let sessionViewport: HTMLDivElement | undefined
   const [sessionThumbTrack, setSessionThumbTrack] = createSignal<HTMLDivElement>()
@@ -557,6 +560,37 @@ export function NewHome() {
     })
   }
 
+  function confirmRemoveProject(conn: ServerConnection.Any, project: LocalProject) {
+    const name = displayName(project)
+    const remove = () => {
+      const key = ServerConnection.key(conn)
+      global.ensureServerCtx(conn).projects.remove(project.worktree)
+      if (selection().server === key && selection().directory === project.worktree) {
+        setSelection({ server: key })
+      }
+      dialog.close()
+    }
+
+    void dialog.show(() => (
+      <DialogV2 fit>
+        <DialogHeader hideClose>
+          <DialogTitleGroup
+            title="Remove project"
+            description={`Remove "${name}" from CloudCode? This only removes the shortcut. It will not delete the folder or its chats.`}
+          />
+        </DialogHeader>
+        <DialogFooter>
+          <ButtonV2 variant="ghost" onClick={() => dialog.close()}>
+            {language.t("common.cancel")}
+          </ButtonV2>
+          <ButtonV2 variant="danger" onClick={remove}>
+            Remove
+          </ButtonV2>
+        </DialogFooter>
+      </DialogV2>
+    ))
+  }
+
   function unseenCount(conn: ServerConnection.Any, project: LocalProject) {
     const state = notification.ensureServerState(ServerConnection.key(conn))
     return directories(project).reduce((total, directory) => total + state.project.unseenCount(directory), 0)
@@ -617,6 +651,94 @@ export function NewHome() {
     })
   }
 
+  async function deleteSession(session: Session) {
+    const conn = focusedServer()
+    const ctx = focusedServerCtx()
+    if (!conn || !ctx) return false
+
+    const [childStore, setStore] = ctx.sync.child(session.directory)
+    const removed = new Set<string>([session.id])
+    const byParent = new Map<string, string[]>()
+
+    for (const item of childStore.session ?? []) {
+      if (!item.parentID) continue
+      const children = byParent.get(item.parentID)
+      if (children) children.push(item.id)
+      else byParent.set(item.parentID, [item.id])
+    }
+
+    const stack = [session.id]
+    while (stack.length) {
+      const parentID = stack.pop()
+      if (!parentID) continue
+      for (const child of byParent.get(parentID) ?? []) {
+        if (removed.has(child)) continue
+        removed.add(child)
+        stack.push(child)
+      }
+    }
+
+    const result = await ctx.sdk.client.session
+      .delete({ directory: session.directory, sessionID: session.id })
+      .then((response) => response.data)
+      .catch((error) => {
+        showToast({
+          title: language.t("session.delete.failed.title"),
+          description: errorMessage(error, language.t("common.requestFailed")),
+        })
+        return false
+      })
+
+    if (!result) return false
+
+    setStore(
+      produce((draft) => {
+        draft.session = draft.session.filter((item) => !removed.has(item.id))
+      }),
+    )
+
+    for (const id of removed) ctx.sync.session.evict(id)
+
+    homeSessions().apply({
+      type: "session.deleted",
+      properties: { sessionID: session.id, info: session },
+    })
+
+    notifySessionTabsRemoved({
+      server: ServerConnection.key(conn),
+      directory: session.directory,
+      sessionIDs: [...removed],
+    })
+
+    return true
+  }
+
+  function confirmDeleteSession(session: Session) {
+    const name = sessionTitle(session.title) || session.id
+    const handleDelete = async () => {
+      if (await deleteSession(session)) dialog.close()
+    }
+
+    void dialog.show(() => (
+      <DialogV2 fit>
+        <DialogHeader hideClose>
+          <DialogTitleGroup
+            title={language.t("session.delete.title")}
+            description={language.t("session.delete.confirm", { name })}
+          />
+        </DialogHeader>
+        <DialogFooter>
+          <ButtonV2 variant="ghost" onClick={() => dialog.close()}>
+            {language.t("common.cancel")}
+          </ButtonV2>
+          <ButtonV2 variant="danger" onClick={() => void handleDelete()}>
+            {language.t("session.delete.button")}
+          </ButtonV2>
+        </DialogFooter>
+      </DialogV2>
+    ))
+  }
+
   function chooseProject(conn: ServerConnection.Any) {
     if (global.servers.health[ServerConnection.key(conn)]?.healthy === false) return
 
@@ -670,9 +792,11 @@ export function NewHome() {
               )
               if (next) setSelection(next)
             }}
+            removeProject={confirmRemoveProject}
             clearNotifications={clearNotifications}
             unseenCount={unseenCount}
             openSettings={openSettings}
+            openRules={openRules}
             openHelp={() => platform.openLink("https://opencode.ai/desktop-feedback")}
             language={language}
             onWheel={(event) => {
@@ -765,6 +889,7 @@ export function NewHome() {
                                   server={selection().server}
                                   openSession={openSession}
                                   archiveSession={archiveSession}
+                                  deleteSession={confirmDeleteSession}
                                 />
                               )}
                             </For>
@@ -780,6 +905,7 @@ export function NewHome() {
           <HomeUtilityNav
             class="flex lg:hidden"
             openSettings={openSettings}
+            openRules={openRules}
             openHelp={() => platform.openLink("https://opencode.ai/desktop-feedback")}
             language={language}
           />
@@ -801,9 +927,11 @@ function HomeProjectColumn(props: {
   chooseProject: (server: ServerConnection.Any) => void
   editProject: (server: ServerConnection.Any, project: LocalProject) => void
   closeProject: (server: ServerConnection.Any, directory: string) => void
+  removeProject: (server: ServerConnection.Any, project: LocalProject) => void
   clearNotifications: (server: ServerConnection.Any, project: LocalProject) => void
   unseenCount: (server: ServerConnection.Any, project: LocalProject) => number
   openSettings: () => void
+  openRules: () => void
   openHelp: () => void
   language: ReturnType<typeof useLanguage>
   onWheel: (event: WheelEvent) => void
@@ -909,6 +1037,7 @@ function HomeProjectColumn(props: {
       <HomeUtilityNav
         class="mb-8 mt-4 hidden shrink-0 lg:flex"
         openSettings={props.openSettings}
+        openRules={props.openRules}
         openHelp={props.openHelp}
         language={props.language}
       />
@@ -919,6 +1048,7 @@ function HomeProjectColumn(props: {
 function HomeUtilityNav(props: {
   class?: string
   openSettings: () => void
+  openRules: () => void
   openHelp: () => void
   language: ReturnType<typeof useLanguage>
 }) {
@@ -931,6 +1061,14 @@ function HomeUtilityNav(props: {
       >
         <IconV2 name="settings-gear" size="small" />
         <span class={HOME_PROJECT_NAV_LABEL}>{props.language.t("sidebar.settings")}</span>
+      </button>
+      <button
+        type="button"
+        class={`${HOME_PROJECT_NAV_ROW} text-v2-text-text-faint [&>[data-slot=icon-svg]]:text-v2-icon-icon-muted`}
+        onClick={props.openRules}
+      >
+        <IconV2 name="checklist" size="small" />
+        <span class={HOME_PROJECT_NAV_LABEL}>Rules</span>
       </button>
       <button
         type="button"
@@ -1045,6 +1183,7 @@ function HomeProjectList(props: {
   openNewSession: (server: ServerConnection.Any, directory: string) => void
   editProject: (server: ServerConnection.Any, project: LocalProject) => void
   closeProject: (server: ServerConnection.Any, directory: string) => void
+  removeProject: (server: ServerConnection.Any, project: LocalProject) => void
   clearNotifications: (server: ServerConnection.Any, project: LocalProject) => void
   unseenCount: (server: ServerConnection.Any, project: LocalProject) => number
   language: ReturnType<typeof useLanguage>
@@ -1065,6 +1204,7 @@ function HomeProjectList(props: {
             openNewSession={props.openNewSession}
             editProject={props.editProject}
             closeProject={props.closeProject}
+            removeProject={props.removeProject}
             clearNotifications={props.clearNotifications}
             language={props.language}
           />
@@ -1156,6 +1296,7 @@ function HomeProjectRow(props: {
   openNewSession: (server: ServerConnection.Any, directory: string) => void
   editProject: (server: ServerConnection.Any, project: LocalProject) => void
   closeProject: (server: ServerConnection.Any, directory: string) => void
+  removeProject: (server: ServerConnection.Any, project: LocalProject) => void
   clearNotifications: (server: ServerConnection.Any, project: LocalProject) => void
   language: ReturnType<typeof useLanguage>
 }) {
@@ -1231,6 +1372,9 @@ function HomeProjectRow(props: {
               <MenuV2.Separator />
               <MenuV2.Item onSelect={() => props.closeProject(props.server, props.project.worktree)}>
                 {props.language.t("common.close")}
+              </MenuV2.Item>
+              <MenuV2.Item onSelect={() => props.removeProject(props.server, props.project)}>
+                Remove project
               </MenuV2.Item>
             </MenuV2.Content>
           </MenuV2.Portal>
@@ -1569,8 +1713,10 @@ function HomeSessionRow(props: {
   server: ServerConnection.Key
   openSession: (session: Session, options?: OpenSessionOptions) => void
   archiveSession: (session: Session) => Promise<void>
+  deleteSession: (session: Session) => void
 }) {
   const language = useLanguage()
+  const [state, setState] = createStore({ menuOpen: false })
   const title = createMemo(() => sessionTitle(props.record.session.title) || props.record.session.id)
   const showProjectName = () => props.showProjectName && props.record.projectName
 
@@ -1610,6 +1756,32 @@ function HomeSessionRow(props: {
           </span>
         </Show>
       </button>
+      <div
+        class="hover-reveal absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-1 group-hover/session:opacity-100 focus-within:opacity-100 data-[menu=true]:opacity-100"
+        data-menu={state.menuOpen}
+      >
+        <MenuV2
+          gutter={6}
+          modal={false}
+          placement="bottom-end"
+          open={state.menuOpen}
+          onOpenChange={(open) => setState("menuOpen", open)}
+        >
+          <MenuV2.Trigger
+            as={IconButtonV2}
+            data-action="home-session-menu"
+            variant="ghost-muted"
+            size="small"
+            icon={<IconV2 name="outline-dots" />}
+            aria-label={language.t("common.moreOptions")}
+          />
+          <MenuV2.Portal>
+            <MenuV2.Content>
+              <MenuV2.Item onSelect={() => props.deleteSession(props.record.session)}>Delete chat</MenuV2.Item>
+            </MenuV2.Content>
+          </MenuV2.Portal>
+        </MenuV2>
+      </div>
       <Show when={SHOW_HOME_SESSION_ARCHIVE}>
         <div class="hover-reveal absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-1 group-hover/session:opacity-100 focus-within:opacity-100">
           <TooltipV2 class="flex shrink-0 items-center" placement="bottom" value={language.t("common.archive")}>
@@ -1821,3 +1993,4 @@ export function LegacyHome() {
     </div>
   )
 }
+
