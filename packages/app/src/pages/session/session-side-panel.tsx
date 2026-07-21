@@ -751,7 +751,7 @@ export function SessionSidePanel(props: {
                               diffVersion={props.diffVersion}
                               loadDiff={props.loadDiff}
                               expandUnchanged={props.expandUnchanged}
-                              onSelect={(path) => previewTab(file.tab(path))}
+                              onSelect={(path) => openTab(file.tab(path))}
                               onSelectPermanent={(path) => openTab(file.tab(path))}
                               filterRef={(element) => (fileFilter = element)}
                             />
@@ -873,3 +873,4 @@ export function SessionSidePanel(props: {
     </Show>
   )
 }
+

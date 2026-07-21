@@ -38,7 +38,7 @@ export function createPromptModelSelection(input: { agent: () => { model?: Model
   }
 
   const current = () => {
-    const key = [prompt.model.current(), input.agent()?.model, configured(), recent(), fallback()].find(
+    const key = [prompt.model.current(), recent(), input.agent()?.model, configured(), fallback()].find(
       (item): item is ModelKey => !!item && valid(item),
     )
     if (!key) return
@@ -131,3 +131,4 @@ export function createPromptModelSelection(input: { agent: () => { model?: Model
 
   return selection
 }
+
