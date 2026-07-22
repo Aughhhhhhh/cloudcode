@@ -443,7 +443,14 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       disabled: !params.id || !info()?.revert?.messageID,
       onSelect: redo,
     }),
-
+    sessionCommand({
+      id: "session.compact",
+      title: language.t("command.session.compact"),
+      description: language.t("command.session.compact.description"),
+      slash: "compact",
+      disabled: !params.id || visibleUserMessages().length === 0,
+      onSelect: compact,
+    }),
     sessionCommand({
       id: "session.fork",
       title: language.t("command.session.fork"),
@@ -598,4 +605,5 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     ...permissionsCmds(),
   ])
 }
+
 
