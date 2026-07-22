@@ -24,7 +24,7 @@ export function invalidateFromWatcher(event: WatcherEvent, ops: WatcherOps) {
   if (!rawPath) return
   if (!kind) return
 
-  const path = ops.normalize(rawPath)
+  const path = ops.normalize(rawPath).replaceAll("\\", "/")
   if (!path) return
   if (path.startsWith(".git/")) return
 
@@ -51,3 +51,4 @@ export function invalidateFromWatcher(event: WatcherEvent, ops: WatcherOps) {
 
   ops.refreshDir(parent)
 }
+

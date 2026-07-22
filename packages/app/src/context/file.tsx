@@ -57,7 +57,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
   gate: false,
   init: () => {
     const sdk = useSDK()
-    useSync()
+    const sync = useSync()
     const params = useParams()
     const serverSDK = useServerSDK()
     const language = useLanguage()
@@ -114,6 +114,21 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
         setStore("file", reconcile({}))
         tree.reset()
       })
+    })
+
+    let sessionWasWorking = false
+    createEffect(() => {
+      const sessionID = params.id
+      const working = sessionID ? sync().data.session_working(sessionID) : false
+
+      if (sessionWasWorking && !working) {
+        const directories = new Set(["", ...tree.loadedDirectories()])
+        for (const directory of directories) {
+          void tree.listDir(directory, { force: true })
+        }
+      }
+
+      sessionWasWorking = working
     })
 
     const viewCache = createFileViewCache(serverSDK().scope)
@@ -293,3 +308,4 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
     }
   },
 })
+

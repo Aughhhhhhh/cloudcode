@@ -161,14 +161,21 @@ export function createFileTreeStore(options: TreeStoreOptions) {
     return out
   }
 
+  const loadedDirectories = () =>
+    Object.entries(tree.dir)
+      .filter(([, state]) => state.loaded)
+      .map(([path]) => path)
+
   return {
     listDir,
     expandDir,
     collapseDir,
     dirState,
     children,
+    loadedDirectories,
     node: (path: string) => tree.node[path],
     isLoaded: (path: string) => Boolean(tree.dir[path]?.loaded),
     reset,
   }
 }
+
